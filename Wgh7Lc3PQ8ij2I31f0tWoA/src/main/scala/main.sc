@@ -7,24 +7,16 @@ transparency: Int)
 case class RGBPixel (override val pos: Pos, override val color: Color)
     extends Pixel (pos, color)
 
-val screen = "0:255,0,0,0|1:0,255,0,0|2:0,0,255,0|3:0,0,0,255"
-
-val pixels = screen.stripMargin
+val pixels = "0:255,0,0,0|1:0,255,0,0|2:0,0,255,0|3:0,0,0,255".stripMargin
   .split ("\\|")
   .zipWithIndex
-  .flatMap { case (line, y) =>
+  .collect { case (line, y) =>
     val Array (index, data) = line.split (":")
-    if (index.isEmpty) None
-    else {
-      val Array (r, g, b, t) = data.split (",")
-      val color = Color (r.toInt, g.toInt, b.toInt)
-      val transparency = if (t == "null" || t == null) None else Some (t.toInt)
-      transparency match {
-        case Some (t) =>
-          Some (TransparentPixel (Pos (index.toInt, y), color, t))
-        case None => Some (RGBPixel (Pos (index.toInt, y), color))
-      }
-    }
+    val Array (r, g, b, t) = data.split (",")
+    val color = Color (r.toInt, g.toInt, b.toInt)
+    val pos = Pos (index.toInt, y)
+    if (t == "null" || t == null) RGBPixel (pos, color)
+    else TransparentPixel (pos, color, t.toInt)
   }
 
 val redPixelByRow =
