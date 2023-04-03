@@ -1,10 +1,11 @@
 import akka.actor.ActorSystem
-import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.{HttpRequest, HttpResponse, Uri}
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.stream.{ActorMaterializer, Materializer}
 import akka.stream.scaladsl.{Sink, Source}
+import akka.util.ByteString
+
 import scala.concurrent.Future
 import scala.io.StdIn
 
@@ -15,7 +16,8 @@ object NasaAPIDemo {
     import system.dispatcher
 
     val apiKey = "LSuFph5M85xV8HzueGPdzjU1RKWGWzx0ItC3LyJP"
-    val apiUrl = s"https://api.nasa.gov/planetary/apod?api_key=$apiKey"
+    val date = StdIn.readLine("Enter date (YYYY-MM-DD): ")
+    val apiUrl = s"https://api.nasa.gov/planetary/apod?api_key=$apiKey&date=$date"
 
     val headers = List.empty
     val request = HttpRequest(uri = Uri(apiUrl), headers = headers)
