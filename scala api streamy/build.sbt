@@ -1,43 +1,55 @@
 import akka.actor.ActorSystem
+import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model._
+import akka.http.scaladsl.model.{HttpRequest, HttpResponse, Uri}
 import akka.http.scaladsl.unmarshalling.Unmarshal
 import akka.stream.{ActorMaterializer, Materializer}
 import akka.stream.scaladsl.{Sink, Source}
 import scala.concurrent.Future
+import scala.io.StdIn
 
-object BookPriceApp {
+object NasaAPIDemo {
   def main(args: Array[String]): Unit = {
     implicit val system = ActorSystem()
     implicit val materializer = ActorMaterializer()
     import system.dispatcher
 
-    val apiKey = "your-api-key"
-    val bookTitle = "The Hitchhiker's Guide to the Galaxy"
-    val apiUrl = s"https://www.googleapis.com/books/v1/volumes?q=$bookTitle&key=$apiKey"
+    val apiKey = "LSuFph5M85xV8HzueGPdzjU1RKWGWzx0ItC3LyJP"
+    val apiUrl = s"https://api.nasa.gov/planetary/apod?api_key=$apiKey"
 
-    val headers = List[HttpHeader]()
-    val request = HttpRequest(uri = apiUrl, headers = headers)
-    val responseFuture: Future[BookPriceData] =
+    val headers = List.empty
+    val request = HttpRequest(uri = Uri(apiUrl), headers = headers)
+
+    val responseFuture: Future[NasaApiResponse] =
       Source.single(request)
-        .via(Http().outgoingConnectionHttps("www.googleapis.com"))
-        .mapAsync(1)(response => Unmarshal(response.entity).to[BookPriceData])
+        .via(Http().outgoingConnectionHttps("api.nasa.gov"))
+        .flatMapConcat { response =>
+          response.entity.dataBytes
+            .runFold(ByteString.empty)(_ ++ _)
+            .map(data => (response, data))
+        }
+        .mapAsync(1) { case (response, data) =>
+          Unmarshal(data).to[NasaApiResponse].map(result => (response, result))
+        }
         .runWith(Sink.head)
 
     responseFuture.onComplete {
-      case scala.util.Success(bookPriceData) =>
-        val bookPrice = bookPriceData.items.headOption.flatMap(_.saleInfo.listPrice.map(_.amount))
-        bookPrice match {
-          case Some(price) => println(s"The price of $bookTitle is $price")
-          case None => println(s"Failed to retrieve book price for $bookTitle")
+      case scala.util.Success((response, nasaApiResponse)) =>
+        if (nasaApiResponse.media_type == "image") {
+          println(s"Title: ${nasaApiResponse.title}")
+          println(s"Explanation: ${nasaApiResponse.explanation}")
+          println(s"Image URL: ${nasaApiResponse.url}")
+        } else if (nasaApiResponse.media_type == "video") {
+          println(s"Title: ${nasaApiResponse.title}")
+          println(s"Explanation: ${nasaApiResponse.explanation}")
+          println(s"Video URL: ${nasaApiResponse.url}")
+        } else {
+          println("Unknown media type")
         }
       case scala.util.Failure(ex) =>
-        println(s"Failed to retrieve book price data: ${ex.getMessage}")
+        println(s"Failed to retrieve NASA data: ${ex.getMessage}")
     }
   }
 }
 
-case class BookPriceData(items: List[BookPriceItem])
-case class BookPriceItem(saleInfo: SaleInfo)
-case class SaleInfo(listPrice: Option[ListPrice])
-case class ListPrice(amount: Double)
+case class NasaApiResponse(title: String, explanation: String, media_type: String, url: String)
