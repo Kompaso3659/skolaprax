@@ -9,9 +9,11 @@ import scala.io.StdIn
 import scala.util.{Failure, Success}
 
 object AkkaHttpServer extends App {
-  implicit val actorSystem = ActorSystem()
-  implicit val materializer: Materializer = ActorMaterializer()
-  implicit val ec = actorSystem.dispatcher
+  implicit val system = ActorSystem()
+  implicit val materializer = ActorMaterializer()
+  implicit val ec = system.dispatcher
+
+  val nasaApiClient = new NasaApiClient()
 
   val route = {
     concat(
@@ -32,43 +34,58 @@ object AkkaHttpServer extends App {
           }
         }
       },
+      path("nasa") {
+        get {
+          parameters("date".as[String]) { date =>
+            onComplete(nasaApiClient.getImageOfTheDay(date)) {
+              case Success(response) =>
+                if (response.media_type == "image") {
+                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`,
+                    s"""
+                       |<h2>${response.title}</h2>
+                       |<p>${response.explanation}</p>
+                       |<img src="${response.url}"/>
+                       |""".stripMargin))
+                } else if (response.media_type == "video") {
+                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`,
+                    s"""
+                       |<h2>${response.title}</h2>
+                       |<p>${response.explanation}</p>
+                       |<iframe width="560" height="315" src="${response.url}" frameborder="0" allowfullscreen></iframe>
+                       |""".stripMargin))
+                } else {
+                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "Unknown media type"))
+                }
+              case Failure(ex) =>
+                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`,
+                  s"Failed to retrieve NASA data: ${ex.getMessage}"))
+            }
+          }
+        }
+      },
       pathEndOrSingleSlash {
         get {
           complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "Response from server"))
         }
       },
-      pathPrefix("user" / LongNumber)( userId => concat(
-        pathEndOrSingleSlash {
-          get {
-            complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"user detail of user $userId"))
-          }
-        },
-        path("delete") {
-          decodeRequest {
-            post {
-              entity(as[String]) { ent: String =>
-                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"deleting user $userId with params $ent"))
+      pathPrefix("user" / LongNumber)(userId =>
+        concat(
+          pathEndOrSingleSlash {
+            get {
+              complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"user detail of user $userId"))
+            }
+          },
+          path("delete") {
+            decodeRequest {
+              post {
+                entity(as[String]) { ent: String =>
+                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"deleting user $userId with params $ent"))
+                }
               }
             }
           }
-        }
-      )),
-      pathPrefix("nasa") {
-        pathEndOrSingleSlash {
-          get {
-            parameters("date".as[String]) { date =>
-              onComplete(NasaApiClient.getImageOfTheDay(date)) {
-                case Success(Some(image)) =>
-                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"<h1>${image.title}</h1><img src='${image.url}'><p>${image.explanation}</p>"))
-                case Success(None) =>
-                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"No image available for date $date"))
-                case Failure(exception) =>
-                  complete(InternalServerError, s"An error occurred: ${exception.getMessage}")
-              }
-            }
-          }
-        }
-      }
+        )
+      )
     )
   }
 
@@ -78,5 +95,5 @@ object AkkaHttpServer extends App {
   } yield binding
 
   StdIn.readLine()
-  bindingFut.flatMap(_.unbind()).andThen(_ => actorSystem.terminate())
+  bindingFut.flatMap(_.unbind()).andThen(_ => system.terminate())
 }
