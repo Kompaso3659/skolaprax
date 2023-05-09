@@ -15,7 +15,7 @@ case class NasaApiResponse(date: String, explanation: String, media_type: String
 class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Materializer) {
   private val apiBaseUrl = "https://api.nasa.gov/planetary/apod"
 
-  def getImageOfTheDay(date: String): Future[NasaApiResponse] = {
+ def getImageOfTheDay(date: String): Future[NasaApiResponse] = {
     val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey"
     val request = HttpRequest(HttpMethods.GET, requestUrl)
     val responseFuture = Http().singleRequest(request)
@@ -59,13 +59,13 @@ object AkkaHttpServer extends App {
         }
       },
       path("nasa") {
-        get {
-          parameters("date".as[String]) { date =>
-            onComplete(nasaApiClient.getImageOfTheDay(date)) {
-              case Success(response) =>
-                complete(response.toJson.prettyPrint)
-              case Failure(ex) =>
-                complete(HttpResponse(StatusCodes.InternalServerError, entity = s"Failed to retrieve NASA data: ${ex.getMessage}"))
+  get {
+    parameters("date".as[String]) { date =>
+      onComplete(nasaApiClient.getImageOfTheDay(date)) {
+        case Success(response) =>
+          complete(response.toJson.prettyPrint)
+        case Failure(ex) =>
+          complete(HttpResponse(StatusCodes.InternalServerError, entity = s"Failed to retrieve NASA data: ${ex.getMessage}"))
                     s"""
                        |<h2>${response.title}</h2>
                        |<p>${response.explanation}</p>
