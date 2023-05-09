@@ -15,21 +15,20 @@ case class NasaApiResponse(date: String, explanation: String, media_type: String
 class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Materializer) {
   private val apiBaseUrl = "https://api.nasa.gov/planetary/apod"
 
-  def getImageOfTheDay(date: String): Future[NasaApiResponse] = {
-    val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey"
-    val request = HttpRequest(HttpMethods.GET, requestUrl)
-    val responseFuture = Http().singleRequest(request)
-    responseFuture.flatMap(response => response.status match {
-      case StatusCodes.OK =>
-        response.entity.toStrict(5.seconds).map { entity =>
-          val json = entity.data.utf8String.parseJson
-          json.convertTo[NasaApiResponse]
-        }
-      case _ =>
-        response.discardEntityBytes()
-        Future.failed(new RuntimeException(s"Unexpected status code ${response.status}"))
-    })
-  }
+  def getImageOfTheDay(date: String, hd: Boolean = false): Future[NasaApiResponse] = {
+  val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey${if (hd) "&hd=true" else ""}"
+  val request = HttpRequest(HttpMethods.GET, requestUrl)
+  val responseFuture = Http().singleRequest(request)
+  responseFuture.flatMap(response => response.status match {
+    case StatusCodes.OK =>
+      response.entity.toStrict(5.seconds).map { entity =>
+        val json = entity.data.utf8String.parseJson
+        json.convertTo[NasaApiResponse]
+      }
+    case _ =>
+      response.discardEntityBytes()
+      Future.failed(new RuntimeException(s"Unexpected status code ${response.status}"))
+  })
 }
 
 object AkkaHttpServer extends App {
