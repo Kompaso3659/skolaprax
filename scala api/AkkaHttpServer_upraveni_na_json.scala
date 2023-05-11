@@ -5,6 +5,7 @@ import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.Directives._
 import akka.stream.{ActorMaterializer, Materializer}
 import scala.concurrent.Future
+import scala.concurrent.duration._
 import scala.io.StdIn
 import scala.util.{Failure, Success}
 import spray.json._
@@ -16,19 +17,20 @@ class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Mate
   private val apiBaseUrl = "https://api.nasa.gov/planetary/apod"
 
   def getImageOfTheDay(date: String, hd: Boolean = false): Future[NasaApiResponse] = {
-  val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey${if (hd) "&hd=true" else ""}"
-  val request = HttpRequest(HttpMethods.GET, requestUrl)
-  val responseFuture = Http().singleRequest(request)
-  responseFuture.flatMap(response => response.status match {
-    case StatusCodes.OK =>
-      response.entity.toStrict(5.seconds).map { entity =>
-        val json = entity.data.utf8String.parseJson
-        json.convertTo[NasaApiResponse]
-      }
-    case _ =>
-      response.discardEntityBytes()
-      Future.failed(new RuntimeException(s"Unexpected status code ${response.status}"))
-  })
+    val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey${if (hd) "&hd=true" else ""}"
+    val request = HttpRequest(HttpMethods.GET, requestUrl)
+    val responseFuture = Http().singleRequest(request)
+    responseFuture.flatMap(response => response.status match {
+      case StatusCodes.OK =>
+        response.entity.toStrict(5.seconds).map { entity =>
+          val json = entity.data.utf8String.parseJson
+          json.convertTo[NasaApiResponse]
+        }
+      case _ =>
+        response.discardEntityBytes()
+        Future.failed(new RuntimeException(s"Unexpected status code ${response.status}"))
+    })
+  }
 }
 
 object AkkaHttpServer extends App {
@@ -61,11 +63,7 @@ object AkkaHttpServer extends App {
     )
   }
 
-  val bindingFut = for {
-    binding <- Http().newServerAt("localhost", 8080).bind(route)
-    _ = println(s"Server running on ${binding.localAddress.getHostName}:${binding.localAddress.getPort}")
-  } yield binding
-
+  val bindingFut = Http().newServerAt("localhost", 8080).bind(route)
   bindingFut.onComplete {
     case Success(binding) =>
       println(s"Server is listening on ${binding.localAddress}")
@@ -75,5 +73,8 @@ object AkkaHttpServer extends App {
       system.terminate()
   }
 
-  Await.result(system.whenTerminated, Duration.Inf)
+  StdIn.readLine()
+  bindingFut
+    .flatMap(_.unbind())
+    .onComplete(_ => system.terminate())
 }
