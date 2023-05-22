@@ -10,16 +10,24 @@ import scala.io.StdIn
 import scala.util.{Failure, Success}
 import spray.json._
 import DefaultJsonProtocol._
+import scala.concurrent.ExecutionContext
 
 case class NasaApiResponse(date: String, explanation: String, media_type: String, title: String, url: String)
 
-class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Materializer) {
+object JsonProtocol {
+  implicit val responseFormat = jsonFormat5(NasaApiResponse)
+}
+
+class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Materializer, ec: ExecutionContext) {
+  import JsonProtocol._
+
   private val apiBaseUrl = "https://api.nasa.gov/planetary/apod"
 
   def getImageOfTheDay(date: String, hd: Boolean = false): Future[NasaApiResponse] = {
     val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey${if (hd) "&hd=true" else ""}"
     val request = HttpRequest(HttpMethods.GET, requestUrl)
     val responseFuture = Http().singleRequest(request)
+
     responseFuture.flatMap(response => response.status match {
       case StatusCodes.OK =>
         response.entity.toStrict(5.seconds).map { entity =>
@@ -37,6 +45,8 @@ object AkkaHttpServer extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val ec = system.dispatcher
+
+  import JsonProtocol._
 
   val apiKey = "LSuFph5M85xV8HzueGPdzjU1RKWGWzx0ItC3LyJP"
   val nasaApiClient = new NasaApiClient(apiKey)
