@@ -2,7 +2,7 @@ import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpRequest, HttpResponse, StatusCodes}
 import akka.http.scaladsl.server.Directives._
-import akka.stream.{ActorMaterializer, Materializer}
+import akka.stream.ActorMaterializer
 import akka.util.Timeout
 import slick.jdbc.H2Profile.api._
 import spray.json._
@@ -13,10 +13,17 @@ import scala.io.StdIn
 import scala.util.{Failure, Success}
 
 object Main extends App {
+
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val ec = system.dispatcher
   implicit val timeout: Timeout = Timeout(5.seconds)
+
+  case class User(name: String, age: Int)
+
+  object User {
+    def unapply(user: User): Option[(String, Int)] = Some(user.name, user.age)
+  }
 
   case class User(id: Long, name: String)
 
@@ -38,7 +45,11 @@ object Main extends App {
 
   case class NasaApiResponse(date: String, explanation: String, media_type: String, title: String, url: String)
 
-  class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Materializer) {
+  object NasaApiResponseJsonProtocol extends DefaultJsonProtocol {
+    implicit val nasaApiResponseFormat: RootJsonFormat[NasaApiResponse] = jsonFormat5(NasaApiResponse)
+  }
+
+  class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: ActorMaterializer) {
     private val apiBaseUrl = "https://api.nasa.gov/planetary/apod"
 
     def getImageOfTheDay(date: String): Future[NasaApiResponse] = {
@@ -50,7 +61,7 @@ object Main extends App {
           case StatusCodes.OK =>
             response.entity.toStrict(5.seconds).map { entity =>
               val json = entity.data.utf8String.parseJson
-              json.convertTo[NasaApiResponse]
+              json.convertTo[NasaApiResponse](NasaApiResponseJsonProtocol.nasaApiResponseFormat)
             }
           case _ =>
             response.discardEntityBytes()
@@ -78,7 +89,7 @@ object Main extends App {
             case Success(value) =>
               complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "Hello to everyone"))
             case Failure(exception) =>
-              complete(StatusCodes.InternalServerError, s"An error occurred: ${exception.getMessage}")
+              complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"Failed: ${exception.getMessage}"))
           }
         }
       },
@@ -90,104 +101,50 @@ object Main extends App {
             onComplete(userFuture) {
               case Success(Some(user)) =>
                 val storedApiResponseJson = user.name
-                val storedApiResponse = storedApiResponseJson.parseJson.convertTo[NasaApiResponse]
-                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, storedApiResponse.toString))
+                val storedApiResponse = storedApiResponseJson.parseJson.convertTo[NasaApiResponse](NasaApiResponseJsonProtocol.nasaApiResponseFormat)
+                complete(HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, formatResponse(storedApiResponse))))
               case Success(None) =>
-                val storedApiResponseFuture = nasaApiClient.getImageOfTheDay(date)
-                onComplete(storedApiResponseFuture) {
+                val apiResponseFuture = nasaApiClient.getImageOfTheDay(date)
+                onComplete(apiResponseFuture) {
                   case Success(response) =>
-                    val json = response.toJson
-                    val insertAction = users += User(0, json.toString())
+                    val responseJson = response.toJson(NasaApiResponseJsonProtocol.nasaApiResponseFormat).toString()
+                    val insertAction = users += User(0, responseJson)
                     db.run(insertAction).onComplete {
                       case Success(_) =>
                         println(s"NasaApiResponse for date $date stored in the database.")
                       case Failure(ex) =>
                         println(s"Failed to store NasaApiResponse for date $date in the database: ${ex.getMessage}")
                     }
-                    if (response.media_type == "image") {
-                      complete(
-                        HttpResponse(
-                          StatusCodes.OK,
-                          entity = HttpEntity(
-                            ContentTypes.`text/html(UTF-8)`,
-                            s"""
-                               |<h2>${response.title}</h2>
-                               |<p>${response.explanation}</p>
-                               |<img src="${response.url}"/>
-                               |""".stripMargin
-                          )
-                        )
-                      )
-                    } else if (response.media_type == "video") {
-                      complete(
-                        HttpResponse(
-                          StatusCodes.OK,
-                          entity = HttpEntity(
-                            ContentTypes.`text/html(UTF-8)`,
-                            s"""
-                               |<h2>${response.title}</h2>
-                               |<p>${response.explanation}</p>
-                               |<iframe width="560" height="315" src="${response.url}" frameborder="0" allowfullscreen></iframe>
-                               |""".stripMargin
-                          )
-                        )
-                      )
-                    } else {
-                      complete(HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, "Unknown media type")))
-                    }
+                    complete(HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, formatResponse(response))))
                   case Failure(ex) =>
-                    complete(
-                      HttpResponse(
-                        StatusCodes.InternalServerError,
-                        entity = HttpEntity(
-                          ContentTypes.`text/html(UTF-8)`,
-                          s"Failed to retrieve NASA data: ${ex.getMessage}"
-                        )
-                      )
-                    )
+                    complete(HttpResponse(StatusCodes.InternalServerError, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, s"Failed to retrieve NASA data: ${ex.getMessage}")))
                 }
               case Failure(ex) =>
-                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"An error occurred: ${ex.getMessage}"))
+                complete(HttpResponse(StatusCodes.InternalServerError, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, s"An error occurred: ${ex.getMessage}")))
             }
           }
         }
-      },
-      pathPrefix("user" / LongNumber) { userId =>
-        concat(
-          pathEndOrSingleSlash {
-            get {
-              val userQuery = users.filter(_.id === userId)
-              val userFuture = db.run(userQuery.result.headOption)
-              onComplete(userFuture) {
-                case Success(Some(user)) =>
-                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"user detail of user ${user.id}: ${user.name}"))
-                case Success(None) =>
-                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "User not found"))
-                case Failure(ex) =>
-                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"An error occurred: ${ex.getMessage}"))
-              }
-            }
-          },
-          path("delete") {
-            post {
-              decodeRequest {
-                entity(as[String]) { ent: String =>
-                  val userQuery = users.filter(_.id === userId)
-                  val deleteAction = userQuery.delete
-                  val deleteFuture = db.run(deleteAction)
-                  onComplete(deleteFuture) {
-                    case Success(_) =>
-                      complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"Deleting user $userId with params $ent"))
-                    case Failure(ex) =>
-                      complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"An error occurred: ${ex.getMessage}"))
-                  }
-                }
-              }
-            }
-          }
-        )
       }
     )
+
+  def formatResponse(response: NasaApiResponse): String = {
+    response.media_type match {
+      case "image" =>
+        s"""
+           |<h2>${response.title}</h2>
+           |<p>${response.explanation}</p>
+           |<img src="${response.url}"/>
+           |""".stripMargin
+      case "video" =>
+        s"""
+           |<h2>${response.title}</h2>
+           |<p>${response.explanation}</p>
+           |<iframe width="560" height="315" src="${response.url}" frameborder="0" allowfullscreen></iframe>
+           |""".stripMargin
+      case _ =>
+        "Unknown media type"
+    }
+  }
 
   val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
 
