@@ -89,7 +89,7 @@ object Main extends App {
             case Success(value) =>
               complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "Hello to everyone"))
             case Failure(exception) =>
-              complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"Failed: ${exception.getMessage}"))
+              complete(StatusCodes.InternalServerError, s"An error occurred: ${exception.getMessage}")
           }
         }
       },
