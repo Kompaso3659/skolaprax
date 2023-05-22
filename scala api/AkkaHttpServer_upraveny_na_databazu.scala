@@ -1,11 +1,11 @@
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpResponse, StatusCodes}
+import akka.http.scaladsl.model.{ContentTypes, HttpEntity, HttpRequest, HttpResponse, StatusCodes}
 import akka.http.scaladsl.server.Directives._
-import akka.stream.ActorMaterializer
+import akka.stream.{ActorMaterializer, Materializer}
 import akka.util.Timeout
 import slick.jdbc.H2Profile.api._
-import com.example.User
+import spray.json._
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -13,17 +13,10 @@ import scala.io.StdIn
 import scala.util.{Failure, Success}
 
 object Main extends App {
-
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val ec = system.dispatcher
   implicit val timeout: Timeout = Timeout(5.seconds)
-
-  case class User(name: String, age: Int)
-
-  object User {
-    def unapply(user: User): Option[(String, Int)] = Some(user.name, user.age)
-  }
 
   case class User(id: Long, name: String)
 
@@ -96,13 +89,15 @@ object Main extends App {
             val userFuture = db.run(query.result.headOption)
             onComplete(userFuture) {
               case Success(Some(user)) =>
-                val storedApiResponse = user.age
-                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, storedApiResponse))
+                val storedApiResponseJson = user.name
+                val storedApiResponse = storedApiResponseJson.parseJson.convertTo[NasaApiResponse]
+                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, storedApiResponse.toString))
               case Success(None) =>
-                onComplete(nasaApiClient.getImageOfTheDay(date)) {
+                val storedApiResponseFuture = nasaApiClient.getImageOfTheDay(date)
+                onComplete(storedApiResponseFuture) {
                   case Success(response) =>
                     val json = response.toJson
-                    val insertAction = users += User(date, json.toString())
+                    val insertAction = users += User(0, json.toString())
                     db.run(insertAction).onComplete {
                       case Success(_) =>
                         println(s"NasaApiResponse for date $date stored in the database.")
