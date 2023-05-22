@@ -92,49 +92,67 @@ object Main extends App {
       path("nasa") {
         get {
           parameters("date".as[String]) { date =>
-            onComplete(nasaApiClient.getImageOfTheDay(date)) {
-              case Success(response) =>
-                if (response.media_type == "image") {
-                  complete(
-                    HttpResponse(
-                      StatusCodes.OK,
-                      entityHttpEntity(
-                        ContentTypes.`text/html(UTF-8)`,
-                        s"""
-                           |<h2>${response.title}</h2>
-                           |<p>${response.explanation}</p>
-                           |<img src="${response.url}"/>
-                           |""".stripMargin
+            val query = users.filter(_.name === date)
+            val userFuture = db.run(query.result.headOption)
+            onComplete(userFuture) {
+              case Success(Some(user)) =>
+                val storedApiResponse = user.age
+                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, storedApiResponse))
+              case Success(None) =>
+                onComplete(nasaApiClient.getImageOfTheDay(date)) {
+                  case Success(response) =>
+                    val json = response.toJson
+                    val insertAction = users += User(date, json.toString())
+                    db.run(insertAction).onComplete {
+                      case Success(_) =>
+                        println(s"NasaApiResponse for date $date stored in the database.")
+                      case Failure(ex) =>
+                        println(s"Failed to store NasaApiResponse for date $date in the database: ${ex.getMessage}")
+                    }
+                    if (response.media_type == "image") {
+                      complete(
+                        HttpResponse(
+                          StatusCodes.OK,
+                          entity = HttpEntity(
+                            ContentTypes.`text/html(UTF-8)`,
+                            s"""
+                               |<h2>${response.title}</h2>
+                               |<p>${response.explanation}</p>
+                               |<img src="${response.url}"/>
+                               |""".stripMargin
+                          )
+                        )
+                      )
+                    } else if (response.media_type == "video") {
+                      complete(
+                        HttpResponse(
+                          StatusCodes.OK,
+                          entity = HttpEntity(
+                            ContentTypes.`text/html(UTF-8)`,
+                            s"""
+                               |<h2>${response.title}</h2>
+                               |<p>${response.explanation}</p>
+                               |<iframe width="560" height="315" src="${response.url}" frameborder="0" allowfullscreen></iframe>
+                               |""".stripMargin
+                          )
+                        )
+                      )
+                    } else {
+                      complete(HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, "Unknown media type")))
+                    }
+                  case Failure(ex) =>
+                    complete(
+                      HttpResponse(
+                        StatusCodes.InternalServerError,
+                        entity = HttpEntity(
+                          ContentTypes.`text/html(UTF-8)`,
+                          s"Failed to retrieve NASA data: ${ex.getMessage}"
+                        )
                       )
                     )
-                  )
-                } else if (response.media_type == "video") {
-                  complete(
-                    HttpResponse(
-                      StatusCodes.OK,
-                      entity = HttpEntity(
-                        ContentTypes.`text/html(UTF-8)`,
-                        s"""
-                           |<h2>${response.title}</h2>
-                           |<p>${response.explanation}</p>
-                           |<iframe width="560" height="315" src="${response.url}" frameborder="0" allowfullscreen></iframe>
-                           |""".stripMargin
-                      )
-                    )
-                  )
-                } else {
-                  complete(HttpResponse(StatusCodes.OK, entity = HttpEntity(ContentTypes.`text/html(UTF-8)`, "Unknown media type")))
                 }
               case Failure(ex) =>
-                complete(
-                  HttpResponse(
-                    StatusCodes.InternalServerError,
-                    entity = HttpEntity(
-                      ContentTypes.`text/html(UTF-8)`,
-                      s"Failed to retrieve NASA data: ${ex.getMessage}"
-                    )
-                  )
-                )
+                complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"An error occurred: ${ex.getMessage}"))
             }
           }
         }
@@ -173,23 +191,14 @@ object Main extends App {
             }
           }
         )
-      },
-      pathEndOrSingleSlash {
-        get {
-          complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "Response from server"))
-        }
       }
     )
 
-  val bindingFuture = Http().newServerAt("localhost", 8080).bind(route)
-  bindingFuture.onComplete {
-    case Success(binding) =>
-      println(s"Server online at http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/")
-    case Failure(ex) =>
-      println(s"Server could not start: ${ex.getMessage}")
-  }
+  val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
 
+  println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")
   StdIn.readLine()
+
   bindingFuture
     .flatMap(_.unbind())
     .onComplete(_ => system.terminate())
