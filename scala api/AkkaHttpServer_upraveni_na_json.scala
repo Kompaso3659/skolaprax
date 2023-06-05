@@ -15,14 +15,12 @@ import scala.concurrent.ExecutionContext
 case class NasaApiResponse(date: String, explanation: String, media_type: String, title: String, url: String)
 
 object JsonProtocol {
-  implicit val responseFormat = jsonFormat5(NasaApiResponse)
+    implicit val responseFormat = jsonFormat5(NasaApiResponse)
 }
 
 class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Materializer, ec: ExecutionContext) {
-  import JsonProtocol._
-
+    import JsonProtocol._
   private val apiBaseUrl = "https://api.nasa.gov/planetary/apod"
-
   def getImageOfTheDay(date: String, hd: Boolean = false): Future[NasaApiResponse] = {
     val requestUrl = s"$apiBaseUrl?date=$date&api_key=$apiKey${if (hd) "&hd=true" else ""}"
     val request = HttpRequest(HttpMethods.GET, requestUrl)
@@ -34,8 +32,10 @@ class NasaApiClient(apiKey: String = "")(implicit system: ActorSystem, mat: Mate
           val json = entity.data.utf8String.parseJson
           json.convertTo[NasaApiResponse]
         }
+
       case _ =>
         response.discardEntityBytes()
+
         Future.failed(new RuntimeException(s"Unexpected status code ${response.status}"))
     })
   }
@@ -45,12 +45,9 @@ object AkkaHttpServer extends App {
   implicit val system = ActorSystem()
   implicit val materializer = ActorMaterializer()
   implicit val ec = system.dispatcher
-
   import JsonProtocol._
-
   val apiKey = "LSuFph5M85xV8HzueGPdzjU1RKWGWzx0ItC3LyJP"
   val nasaApiClient = new NasaApiClient(apiKey)
-
   val route = {
     concat(
       path("nasa") {
@@ -65,6 +62,7 @@ object AkkaHttpServer extends App {
           }
         }
       },
+
       pathEndOrSingleSlash {
         get {
           complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, "Response from server"))
@@ -82,7 +80,6 @@ object AkkaHttpServer extends App {
       ex.printStackTrace()
       system.terminate()
   }
-
   StdIn.readLine()
   bindingFut
     .flatMap(_.unbind())
